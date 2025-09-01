@@ -1,10 +1,9 @@
 from flask import Flask, request, jsonify
-from threading import Thread, Lock
+from threading import Lock
 import time
 import logging
 import os
 import subprocess
-import shlex
 from typing import Dict, List, Optional
 
 app = Flask(__name__)
@@ -16,28 +15,25 @@ logger = logging.getLogger(__name__)
 # Server configuration from environment variables
 SERVER_KEY = os.environ.get("SERVER_KEY", "mysecretkey")
 RECEIVER_TIMEOUT = int(os.environ.get("RECEIVER_TIMEOUT", "30"))
-PORT = int(os.environ.get("PORT", "10000"))
+PORT = int(os.environ.get("PORT", "5000"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 class ReceiverManager:
     def __init__(self):
-        self.receivers: Dict[str, dict] = {}  # receiver_name -> {last_seen, ip, commands}
-        self.commands: Dict[str, List[dict]] = {}  # receiver_name -> list of commands
-        self.command_results: Dict[str, Dict[str, dict]] = {}  # receiver_name -> {command_hash: result}
+        self.receivers: Dict[str, dict] = {}
+        self.commands: Dict[str, List[dict]] = {}
+        self.command_results: Dict[str, Dict[str, dict]] = {}
         self.lock = Lock()
     
     def register_receiver(self, name: str, ip: str) -> bool:
-        """Register or update a receiver's status"""
         with self.lock:
             current_time = time.time()
             
             if name in self.receivers:
-                # Update existing receiver
                 self.receivers[name]['last_seen'] = current_time
                 self.receivers[name]['ip'] = ip
                 logger.info(f"Receiver {name} updated from {ip}")
             else:
-                # Register new receiver
                 self.receivers[name] = {
                     'last_seen': current_time,
                     'ip': ip,
@@ -49,7 +45,6 @@ class ReceiverManager:
             return True
     
     def get_online_receivers(self) -> List[str]:
-        """Get list of online receivers"""
         with self.lock:
             current_time = time.time()
             online = []
@@ -58,13 +53,11 @@ class ReceiverManager:
                 if current_time - data['last_seen'] < RECEIVER_TIMEOUT:
                     online.append(name)
                 else:
-                    # Clean up old commands for offline receivers
                     if name in self.commands:
                         del self.commands[name]
                     if name in self.command_results:
                         del self.command_results[name]
             
-            # Clean up offline receivers
             offline_receivers = [name for name, data in self.receivers.items() 
                                if current_time - data['last_seen'] >= RECEIVER_TIMEOUT]
             for name in offline_receivers:
@@ -77,13 +70,11 @@ class ReceiverManager:
             return online
     
     def add_command(self, target: Optional[str], cmd: str, sender_ip: str) -> bool:
-        """Add a command for a specific receiver or all receivers"""
         with self.lock:
             current_time = time.time()
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             
             if target:
-                # Send to specific receiver
                 if target in self.receivers and current_time - self.receivers[target]['last_seen'] < RECEIVER_TIMEOUT:
                     self.commands[target].append({
                         'command': cmd,
@@ -96,7 +87,6 @@ class ReceiverManager:
                     logger.warning(f"Target {target} not found or offline")
                     return False
             else:
-                # Broadcast to all receivers
                 online_receivers = self.get_online_receivers()
                 for receiver in online_receivers:
                     self.commands[receiver].append({
@@ -108,18 +98,15 @@ class ReceiverManager:
                 return True
     
     def get_commands(self, name: str, ip: str) -> List[str]:
-        """Get pending commands for a receiver"""
         with self.lock:
             current_time = time.time()
             
-            # Update receiver's last seen time
             if name in self.receivers:
                 self.receivers[name]['last_seen'] = current_time
                 self.receivers[name]['ip'] = ip
             else:
                 self.register_receiver(name, ip)
             
-            # Return and clear commands
             if name in self.commands and self.commands[name]:
                 commands = [f"{cmd['timestamp']} - {cmd['command']}" for cmd in self.commands[name]]
                 self.commands[name] = []
@@ -128,12 +115,10 @@ class ReceiverManager:
             return []
     
     def store_command_result(self, name: str, command: str, success: bool, output: str) -> None:
-        """Store the result of a command execution"""
         with self.lock:
             if name not in self.command_results:
                 self.command_results[name] = {}
             
-            # Create a hash of the command for identification
             cmd_hash = str(hash(command))
             self.command_results[name][cmd_hash] = {
                 'success': success,
@@ -142,15 +127,13 @@ class ReceiverManager:
                 'command': command
             }
             
-            # Clean up old results (older than 1 hour)
             current_time = time.time()
             for receiver in list(self.command_results.keys()):
                 for cmd_hash in list(self.command_results[receiver].keys()):
                     if current_time - self.command_results[receiver][cmd_hash]['timestamp'] > 3600:
                         del self.command_results[receiver][cmd_hash]
-    
+
     def get_command_result(self, name: str, command: str) -> Optional[dict]:
-        """Get the result of a command execution"""
         with self.lock:
             cmd_hash = str(hash(command))
             if name in self.command_results and cmd_hash in self.command_results[name]:
@@ -162,12 +145,10 @@ receiver_manager = ReceiverManager()
 
 @app.route('/')
 def home():
-    """Home endpoint to check if server is running"""
     return jsonify({"status": "online", "message": "Command relay server is running"})
 
 @app.route('/register', methods=['POST'])
 def register_receiver():
-    """Endpoint for receivers to register"""
     try:
         data = request.get_json()
         if not data:
@@ -188,7 +169,6 @@ def register_receiver():
 
 @app.route('/who', methods=['POST'])
 def list_receivers():
-    """Endpoint to list online receivers"""
     try:
         data = request.get_json()
         if not data:
@@ -207,7 +187,6 @@ def list_receivers():
 
 @app.route('/send', methods=['POST'])
 def send_command():
-    """Endpoint to send commands"""
     try:
         data = request.get_json()
         if not data:
@@ -236,7 +215,6 @@ def send_command():
 
 @app.route('/receive', methods=['POST'])
 def receive_commands():
-    """Endpoint for receivers to get their commands and return results"""
     try:
         data = request.get_json()
         if not data:
@@ -246,14 +224,11 @@ def receive_commands():
         if not name:
             return jsonify({"error": "Name is required"}), 400
         
-        # Get commands for this receiver
         commands = receiver_manager.get_commands(name, request.remote_addr)
         
-        # Execute commands and store results
         executed_commands = []
         for cmd in commands:
             try:
-                # Extract the actual command (remove timestamp)
                 if " - " in cmd:
                     actual_cmd = cmd.split(" - ", 1)[1]
                 else:
@@ -261,7 +236,6 @@ def receive_commands():
                 
                 executed_commands.append(actual_cmd)
                 
-                # Execute the command
                 result = subprocess.run(
                     actual_cmd,
                     shell=True,
@@ -270,7 +244,6 @@ def receive_commands():
                     timeout=30
                 )
                 
-                # Store the result
                 receiver_manager.store_command_result(
                     name, 
                     actual_cmd, 
@@ -301,7 +274,6 @@ def receive_commands():
 
 @app.route('/command_result', methods=['POST'])
 def get_command_result():
-    """Endpoint to get command execution results"""
     try:
         data = request.get_json()
         if not data:
@@ -332,6 +304,10 @@ def get_command_result():
         logger.error(f"Command result error: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
+# This allows both python main.py and gunicorn main:app to work
 if __name__ == '__main__':
     logger.info(f"Starting server on {HOST}:{PORT}")
     app.run(host=HOST, port=PORT)
+else:
+    # This runs when imported by Gunicorn
+    logger.info("Initializing application for Gunicorn")
