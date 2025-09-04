@@ -4,14 +4,15 @@ import logging
 import asyncio
 import secrets
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 import uvicorn
+import uuid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -43,11 +44,15 @@ SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("PORT", 8000))
 CLIENT_CONNECTION_KEY = os.getenv("CLIENT_CONNECTION_KEY", "default-connection-key")
 
+# Session management
+sessions = {}
+
 # Store connected clients
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.client_info: Dict[str, dict] = {}
+        self.heartbeat_tasks = {}
 
     async def connect(self, websocket: WebSocket, client_name: str):
         await websocket.accept()
@@ -55,24 +60,54 @@ class ConnectionManager:
         self.client_info[client_name] = {
             "name": client_name,
             "connected_at": asyncio.get_event_loop().time(),
-            "last_command_result": None
+            "last_command_result": None,
+            "last_heartbeat": asyncio.get_event_loop().time()
         }
         logger.info(f"Client connected: {client_name}")
+        
+        # Start heartbeat task for this client
+        self.heartbeat_tasks[client_name] = asyncio.create_task(
+            self.send_heartbeats(client_name)
+        )
 
     def disconnect(self, client_name: str):
         if client_name in self.active_connections:
             del self.active_connections[client_name]
             if client_name in self.client_info:
                 del self.client_info[client_name]
+            
+            # Cancel heartbeat task
+            if client_name in self.heartbeat_tasks:
+                self.heartbeat_tasks[client_name].cancel()
+                del self.heartbeat_tasks[client_name]
+                
             logger.info(f"Client disconnected: {client_name}")
+
+    async def send_heartbeats(self, client_name: str):
+        """Send periodic heartbeats to keep connection alive"""
+        while client_name in self.active_connections:
+            try:
+                await self.active_connections[client_name].send_json({
+                    "type": "heartbeat",
+                    "timestamp": asyncio.get_event_loop().time()
+                })
+                # Update last heartbeat time
+                if client_name in self.client_info:
+                    self.client_info[client_name]["last_heartbeat"] = asyncio.get_event_loop().time()
+                await asyncio.sleep(10)  # Send heartbeat every 10 seconds
+            except:
+                break
 
     async def send_personal_message(self, message: dict, client_name: str):
         if client_name in self.active_connections:
             try:
                 await self.active_connections[client_name].send_json(message)
+                return True
             except Exception as e:
                 logger.error(f"Error sending message to {client_name}: {e}")
                 self.disconnect(client_name)
+                return False
+        return False
 
     async def broadcast(self, message: dict):
         disconnected = []
@@ -88,8 +123,8 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Authentication
-def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
+# Authentication functions
+def authenticate_api(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     correct_password = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not (correct_username and correct_password):
@@ -100,10 +135,19 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
+def authenticate_ui(session_id: str = Cookie(None)):
+    if not session_id or session_id not in sessions:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    return sessions[session_id]
+
 # Models
 class CommandRequest(BaseModel):
     command: str
     target: str = "all"
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 # WebSocket endpoint for clients - now requires connection key
 @app.websocket("/ws/{client_name}")
@@ -127,17 +171,34 @@ async def websocket_endpoint(
                 # Store command result in client info
                 if client_name in manager.client_info:
                     manager.client_info[client_name]["last_command_result"] = message["result"]
-                    logger.info(f"Command result from {client_name}: {message['result']}")
+                    manager.client_info[client_name]["last_heartbeat"] = asyncio.get_event_loop().time()
+                    logger.info(f"Command result from {client_name}")
+            elif message["type"] == "heartbeat_response":
+                # Update heartbeat time
+                if client_name in manager.client_info:
+                    manager.client_info[client_name]["last_heartbeat"] = asyncio.get_event_loop().time()
+                    
     except WebSocketDisconnect:
+        manager.disconnect(client_name)
+    except Exception as e:
+        logger.error(f"WebSocket error for {client_name}: {e}")
         manager.disconnect(client_name)
 
 # API endpoints
 @app.get("/clients")
-async def get_clients(username: str = Depends(authenticate)):
-    return manager.client_info
+async def get_clients(username: str = Depends(authenticate_ui)):
+    # Filter out clients that haven't responded to heartbeats in a while
+    current_time = asyncio.get_event_loop().time()
+    active_clients = {}
+    
+    for client_name, info in manager.client_info.items():
+        if current_time - info.get("last_heartbeat", 0) < 30:  # 30 second timeout
+            active_clients[client_name] = info
+    
+    return active_clients
 
 @app.post("/send-command")
-async def send_command(request: CommandRequest, username: str = Depends(authenticate)):
+async def send_command(request: CommandRequest, username: str = Depends(authenticate_ui)):
     command = request.command
     target = request.target
     
@@ -151,29 +212,58 @@ async def send_command(request: CommandRequest, username: str = Depends(authenti
         return {"status": "success", "message": f"Command sent to all clients: {command}"}
     else:
         # Send to specific client
-        if target in manager.active_connections:
-            await manager.send_personal_message({
-                "type": "command",
-                "command": command,
-                "from": username
-            }, target)
+        success = await manager.send_personal_message({
+            "type": "command",
+            "command": command,
+            "from": username
+        }, target)
+        
+        if success:
             return {"status": "success", "message": f"Command sent to {target}: {command}"}
         else:
-            return {"status": "error", "message": f"Client {target} not found"}
+            return {"status": "error", "message": f"Client {target} not found or disconnected"}
 
 @app.get("/command-history/{client_name}")
-async def get_command_history(client_name: str, username: str = Depends(authenticate)):
+async def get_command_history(client_name: str, username: str = Depends(authenticate_ui)):
     if client_name in manager.client_info:
         return {"history": manager.client_info[client_name].get("last_command_result")}
     return {"history": None}
 
+# Login endpoint
+@app.post("/login")
+async def login(response: Response, request: LoginRequest):
+    correct_username = secrets.compare_digest(request.username, ADMIN_USERNAME)
+    correct_password = secrets.compare_digest(request.password, ADMIN_PASSWORD)
+    
+    if not (correct_username and correct_password):
+        return {"status": "error", "message": "Invalid credentials"}
+    
+    # Create session
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = request.username
+    
+    # Set session cookie
+    response.set_cookie(key="session_id", value=session_id, httponly=True)
+    return {"status": "success", "message": "Login successful"}
+
+@app.post("/logout")
+async def logout(response: Response, session_id: str = Cookie(None)):
+    if session_id in sessions:
+        del sessions[session_id]
+    response.delete_cookie(key="session_id")
+    return {"status": "success", "message": "Logout successful"}
+
 # UI endpoints
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request, username: str = Depends(authenticate)):
-    return templates.TemplateResponse("index.html", {"request": request, "username": username})
+async def read_root(request: Request):
+    return RedirectResponse(url="/login")
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/admin", response_class=HTMLResponse)
-async def admin_ui(request: Request, username: str = Depends(authenticate)):
+async def admin_ui(request: Request, username: str = Depends(authenticate_ui)):
     return templates.TemplateResponse("index.html", {"request": request, "username": username})
 
 if __name__ == "__main__":
