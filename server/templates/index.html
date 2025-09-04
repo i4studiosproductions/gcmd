@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCON Control Panel</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>RCON Control Panel</h1>
+            <p>Welcome, {{ username }}! | <a href="#" onclick="logout()">Logout</a></p>
+        </header>
+
+        <div class="dashboard">
+            <div class="clients-panel">
+                <h2>Connected Clients</h2>
+                <button onclick="refreshClients()">Refresh</button>
+                <div id="clients-list" class="clients-list">
+                    <p>Loading clients...</p>
+                </div>
+            </div>
+
+            <div class="command-panel">
+                <h2>Send Command</h2>
+                <div class="form-group">
+                    <label for="target">Target:</label>
+                    <div class="radio-group">
+                        <label>
+                            <input type="radio" name="target" value="all" checked> All Clients
+                        </label>
+                        <label>
+                            <input type="radio" name="target" value="specific"> Specific Client
+                        </label>
+                    </div>
+                    <select id="client-select" disabled>
+                        <option value="">Select a client</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="command">Command:</label>
+                    <input type="text" id="command" placeholder="Enter command to execute">
+                </div>
+
+                <button onclick="sendCommand()">Send Command</button>
+
+                <div class="quick-commands">
+                    <h3>Quick Commands</h3>
+                    <button onclick="quickCommand('whoami')">Who Am I</button>
+                    <button onclick="quickCommand('pwd')">Current Directory</button>
+                    <button onclick="quickCommand('ls -la')">List Files</button>
+                    <button onclick="quickCommand('ps aux')">Running Processes</button>
+                    <button onclick="quickCommand('ifconfig')">Network Info</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="output-panel">
+            <h2>Command Output</h2>
+            <div id="output" class="output-area">
+                <p>Command results will appear here...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
