@@ -4,7 +4,7 @@ import logging
 import asyncio
 import secrets
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -41,6 +41,7 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "password")
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("PORT", 8000))
+CLIENT_CONNECTION_KEY = os.getenv("CLIENT_CONNECTION_KEY", "default-connection-key")
 
 # Store connected clients
 class ConnectionManager:
@@ -104,9 +105,19 @@ class CommandRequest(BaseModel):
     command: str
     target: str = "all"
 
-# WebSocket endpoint for clients
+# WebSocket endpoint for clients - now requires connection key
 @app.websocket("/ws/{client_name}")
-async def websocket_endpoint(websocket: WebSocket, client_name: str):
+async def websocket_endpoint(
+    websocket: WebSocket, 
+    client_name: str,
+    key: str = Query(..., description="Connection key required for WebSocket connection")
+):
+    # Validate the connection key
+    if not secrets.compare_digest(key, CLIENT_CONNECTION_KEY):
+        await websocket.close(code=1008, reason="Invalid connection key")
+        logger.warning(f"Client {client_name} attempted to connect with invalid key")
+        return
+    
     await manager.connect(websocket, client_name)
     try:
         while True:
