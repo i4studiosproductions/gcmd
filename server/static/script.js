@@ -1,17 +1,23 @@
-let authHeader = 'Basic ' + btoa('admin:password'); // This will be set by the server
+let authHeader = 'Basic ' + btoa('admin:password');
+let isAuthenticating = false;
 
 // Update auth header with actual credentials
-function updateAuthHeader() {
+async function updateAuthHeader() {
+    if (isAuthenticating) return;
+    
+    isAuthenticating = true;
     const username = prompt('Enter username:') || 'admin';
     const password = prompt('Enter password:') || 'password';
     authHeader = 'Basic ' + btoa(`${username}:${password}`);
-    refreshClients();
+    isAuthenticating = false;
+    return true;
 }
 
 // Logout function
 function logout() {
     if (confirm('Are you sure you want to logout?')) {
-        window.location.href = '/';
+        authHeader = 'Basic ' + btoa('admin:password'); // Reset to default
+        window.location.reload();
     }
 }
 
@@ -25,7 +31,8 @@ async function refreshClients() {
         });
         
         if (response.status === 401) {
-            updateAuthHeader();
+            await updateAuthHeader();
+            // Don't automatically refresh again - let the user initiate the next request
             return;
         }
         
@@ -47,7 +54,7 @@ async function refreshClients() {
             clientItem.className = 'client-item';
             clientItem.innerHTML = `
                 <strong>${name}</strong>
-                <div>Connected: ${Math.floor(info.connected_at)} seconds ago</div>
+                <div>Connected: ${Math.floor((Date.now()/1000) - info.connected_at)} seconds ago</div>
             `;
             clientsList.appendChild(clientItem);
             
@@ -103,7 +110,7 @@ async function sendCommand() {
         });
         
         if (response.status === 401) {
-            updateAuthHeader();
+            await updateAuthHeader();
             return;
         }
         
