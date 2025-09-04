@@ -1,28 +1,121 @@
-let authHeader = 'Basic ' + btoa('admin:password');
-let isAuthenticating = false;
+// Authentication handling
+let authHeader = null;
 
-// Update auth header with actual credentials
-async function updateAuthHeader() {
-    if (isAuthenticating) return;
+// Check if we have credentials stored
+function getStoredCredentials() {
+    const username = localStorage.getItem('rcon_username');
+    const password = localStorage.getItem('rcon_password');
+    return username && password ? { username, password } : null;
+}
+
+// Store credentials
+function storeCredentials(username, password) {
+    localStorage.setItem('rcon_username', username);
+    localStorage.setItem('rcon_password', password);
+}
+
+// Clear stored credentials
+function clearCredentials() {
+    localStorage.removeItem('rcon_username');
+    localStorage.removeItem('rcon_password');
+    authHeader = null;
+}
+
+// Create auth header
+function createAuthHeader(username, password) {
+    return 'Basic ' + btoa(`${username}:${password}`);
+}
+
+// Show login modal
+function showLoginModal() {
+    const modal = document.createElement('div');
+    modal.id = 'login-modal';
+    modal.style.position = 'fixed';
+    modal.style.top = '0';
+    modal.style.left = '0';
+    modal.style.width = '100%';
+    modal.style.height = '100%';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.7)';
+    modal.style.display = 'flex';
+    modal.style.justifyContent = 'center';
+    modal.style.alignItems = 'center';
+    modal.style.zIndex = '1000';
     
-    isAuthenticating = true;
-    const username = prompt('Enter username:') || 'admin';
-    const password = prompt('Enter password:') || 'password';
-    authHeader = 'Basic ' + btoa(`${username}:${password}`);
-    isAuthenticating = false;
-    return true;
+    modal.innerHTML = `
+        <div style="background: white; padding: 20px; border-radius: 5px; width: 300px;">
+            <h2>Login Required</h2>
+            <form id="login-form">
+                <div style="margin-bottom: 15px;">
+                    <label for="login-username">Username:</label>
+                    <input type="text" id="login-username" required style="width: 100%; padding: 5px;">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label for="login-password">Password:</label>
+                    <input type="password" id="login-password" required style="width: 100%; padding: 5px;">
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <button type="submit">Login</button>
+                    <button type="button" onclick="document.getElementById('login-modal').remove()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    document.getElementById('login-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        
+        if (username && password) {
+            storeCredentials(username, password);
+            authHeader = createAuthHeader(username, password);
+            modal.remove();
+            refreshClients();
+        }
+    });
+}
+
+// Check authentication and prompt if needed
+function ensureAuthenticated() {
+    const credentials = getStoredCredentials();
+    if (credentials) {
+        authHeader = createAuthHeader(credentials.username, credentials.password);
+        return true;
+    } else {
+        showLoginModal();
+        return false;
+    }
 }
 
 // Logout function
 function logout() {
     if (confirm('Are you sure you want to logout?')) {
-        authHeader = 'Basic ' + btoa('admin:password'); // Reset to default
+        clearCredentials();
         window.location.reload();
     }
 }
 
+// Handle API responses
+async function handleApiResponse(response) {
+    if (response.status === 401) {
+        clearCredentials();
+        showLoginModal();
+        throw new Error('Authentication required');
+    }
+    
+    if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
+    }
+    
+    return response.json();
+}
+
 // Refresh clients list
 async function refreshClients() {
+    if (!ensureAuthenticated()) return;
+    
     try {
         const response = await fetch('/clients', {
             headers: {
@@ -30,13 +123,7 @@ async function refreshClients() {
             }
         });
         
-        if (response.status === 401) {
-            await updateAuthHeader();
-            // Don't automatically refresh again - let the user initiate the next request
-            return;
-        }
-        
-        const clients = await response.json();
+        const clients = await handleApiResponse(response);
         const clientsList = document.getElementById('clients-list');
         const clientSelect = document.getElementById('client-select');
         
@@ -54,7 +141,7 @@ async function refreshClients() {
             clientItem.className = 'client-item';
             clientItem.innerHTML = `
                 <strong>${name}</strong>
-                <div>Connected: ${Math.floor((Date.now()/1000) - info.connected_at)} seconds ago</div>
+                <div>Connected: ${Math.floor(info.connected_at)} seconds ago</div>
             `;
             clientsList.appendChild(clientItem);
             
@@ -79,6 +166,8 @@ document.querySelectorAll('input[name="target"]').forEach(radio => {
 
 // Send command to clients
 async function sendCommand() {
+    if (!ensureAuthenticated()) return;
+    
     const command = document.getElementById('command').value.trim();
     if (!command) {
         alert('Please enter a command');
@@ -109,12 +198,7 @@ async function sendCommand() {
             })
         });
         
-        if (response.status === 401) {
-            await updateAuthHeader();
-            return;
-        }
-        
-        const result = await response.json();
+        const result = await handleApiResponse(response);
         
         // Display result
         const outputArea = document.getElementById('output');
@@ -150,5 +234,12 @@ setInterval(refreshClients, 10000);
 
 // Initial load
 document.addEventListener('DOMContentLoaded', function() {
-    refreshClients();
+    // Try to use stored credentials first
+    const credentials = getStoredCredentials();
+    if (credentials) {
+        authHeader = createAuthHeader(credentials.username, credentials.password);
+        refreshClients();
+    } else {
+        showLoginModal();
+    }
 });
