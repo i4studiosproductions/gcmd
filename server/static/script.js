@@ -1,107 +1,13 @@
-// Authentication handling
-let authHeader = null;
-
-// Check if we have credentials stored
-function getStoredCredentials() {
-    const username = localStorage.getItem('rcon_username');
-    const password = localStorage.getItem('rcon_password');
-    return username && password ? { username, password } : null;
-}
-
-// Store credentials
-function storeCredentials(username, password) {
-    localStorage.setItem('rcon_username', username);
-    localStorage.setItem('rcon_password', password);
-}
-
-// Clear stored credentials
-function clearCredentials() {
-    localStorage.removeItem('rcon_username');
-    localStorage.removeItem('rcon_password');
-    authHeader = null;
-}
-
-// Create auth header
-function createAuthHeader(username, password) {
-    return 'Basic ' + btoa(`${username}:${password}`);
-}
-
-// Show login modal
-function showLoginModal() {
-    const modal = document.createElement('div');
-    modal.id = 'login-modal';
-    modal.style.position = 'fixed';
-    modal.style.top = '0';
-    modal.style.left = '0';
-    modal.style.width = '100%';
-    modal.style.height = '100%';
-    modal.style.backgroundColor = 'rgba(0,0,0,0.7)';
-    modal.style.display = 'flex';
-    modal.style.justifyContent = 'center';
-    modal.style.alignItems = 'center';
-    modal.style.zIndex = '1000';
-    
-    modal.innerHTML = `
-        <div style="background: white; padding: 20px; border-radius: 5px; width: 300px;">
-            <h2>Login Required</h2>
-            <form id="login-form">
-                <div style="margin-bottom: 15px;">
-                    <label for="login-username">Username:</label>
-                    <input type="text" id="login-username" required style="width: 100%; padding: 5px;">
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label for="login-password">Password:</label>
-                    <input type="password" id="login-password" required style="width: 100%; padding: 5px;">
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <button type="submit">Login</button>
-                    <button type="button" onclick="document.getElementById('login-modal').remove()">Cancel</button>
-                </div>
-            </form>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    document.getElementById('login-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        const username = document.getElementById('login-username').value;
-        const password = document.getElementById('login-password').value;
-        
-        if (username && password) {
-            storeCredentials(username, password);
-            authHeader = createAuthHeader(username, password);
-            modal.remove();
-            refreshClients();
-        }
+// API call helper
+async function apiCall(url, options = {}) {
+    const response = await fetch(url, {
+        credentials: 'include', // Include cookies
+        ...options
     });
-}
-
-// Check authentication and prompt if needed
-function ensureAuthenticated() {
-    const credentials = getStoredCredentials();
-    if (credentials) {
-        authHeader = createAuthHeader(credentials.username, credentials.password);
-        return true;
-    } else {
-        showLoginModal();
-        return false;
-    }
-}
-
-// Logout function
-function logout() {
-    if (confirm('Are you sure you want to logout?')) {
-        clearCredentials();
-        window.location.reload();
-    }
-}
-
-// Handle API responses
-async function handleApiResponse(response) {
-    if (response.status === 401) {
-        clearCredentials();
-        showLoginModal();
+    
+    if (response.status === 401 || response.status === 303) {
+        // Session expired, redirect to login
+        window.location.href = '/login';
         throw new Error('Authentication required');
     }
     
@@ -112,18 +18,22 @@ async function handleApiResponse(response) {
     return response.json();
 }
 
+// Logout function
+function logout() {
+    if (confirm('Are you sure you want to logout?')) {
+        fetch('/logout', {
+            method: 'POST',
+            credentials: 'include'
+        }).then(() => {
+            window.location.href = '/login';
+        });
+    }
+}
+
 // Refresh clients list
 async function refreshClients() {
-    if (!ensureAuthenticated()) return;
-    
     try {
-        const response = await fetch('/clients', {
-            headers: {
-                'Authorization': authHeader
-            }
-        });
-        
-        const clients = await handleApiResponse(response);
+        const clients = await apiCall('/clients');
         const clientsList = document.getElementById('clients-list');
         const clientSelect = document.getElementById('client-select');
         
@@ -141,7 +51,8 @@ async function refreshClients() {
             clientItem.className = 'client-item';
             clientItem.innerHTML = `
                 <strong>${name}</strong>
-                <div>Connected: ${Math.floor(info.connected_at)} seconds ago</div>
+                <div>Connected: ${Math.floor(asyncio.get_event_loop().time() - info.connected_at)} seconds ago</div>
+                <div>Last activity: ${Math.floor(asyncio.get_event_loop().time() - info.last_heartbeat)} seconds ago</div>
             `;
             clientsList.appendChild(clientItem);
             
@@ -166,8 +77,6 @@ document.querySelectorAll('input[name="target"]').forEach(radio => {
 
 // Send command to clients
 async function sendCommand() {
-    if (!ensureAuthenticated()) return;
-    
     const command = document.getElementById('command').value.trim();
     if (!command) {
         alert('Please enter a command');
@@ -186,19 +95,16 @@ async function sendCommand() {
     }
     
     try {
-        const response = await fetch('/send-command', {
+        const result = await apiCall('/send-command', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': authHeader
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 command: command,
                 target: target
             })
         });
-        
-        const result = await handleApiResponse(response);
         
         // Display result
         const outputArea = document.getElementById('output');
@@ -229,17 +135,10 @@ function quickCommand(command) {
     document.getElementById('command').value = command;
 }
 
-// Auto-refresh clients every 10 seconds
-setInterval(refreshClients, 10000);
+// Auto-refresh clients every 5 seconds
+setInterval(refreshClients, 5000);
 
 // Initial load
 document.addEventListener('DOMContentLoaded', function() {
-    // Try to use stored credentials first
-    const credentials = getStoredCredentials();
-    if (credentials) {
-        authHeader = createAuthHeader(credentials.username, credentials.password);
-        refreshClients();
-    } else {
-        showLoginModal();
-    }
+    refreshClients();
 });
