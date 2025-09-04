@@ -7,7 +7,76 @@
     <style>
         * {
             box-sizing: border-box;
-            margin: 0;
+            margin: 0;<script>
+   <script>
+    async function loadClients() {
+        try {
+            const response = await fetch('/clients');
+            const clients = await response.json();
+            
+            const clientsDiv = document.getElementById('clients');
+            const targetSelect = document.getElementById('target');
+            
+            clientsDiv.innerHTML = '';
+            targetSelect.innerHTML = '<option value="all">All Clients</option>';
+            
+            if (Object.keys(clients).length === 0) {
+                clientsDiv.innerHTML = '<p>No clients connected</p>';
+                return;
+            }
+            
+            for (const [name, info] of Object.entries(clients)) {
+                const clientDiv = document.createElement('div');
+                clientDiv.className = 'client-item';
+                clientDiv.innerHTML = `
+                    <strong>${name}</strong><br>
+                    Connected: ${Math.round((Date.now()/1000) - info.connected_at)}s ago
+                `;
+                clientsDiv.appendChild(clientDiv);
+                
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                targetSelect.appendChild(option);
+            }
+        } catch (error) {
+            console.error('Error loading clients:', error);
+        }
+    }
+
+    async function sendCommand() {
+        const command = document.getElementById('command').value;
+        const target = document.getElementById('target').value;
+        
+        if (!command) {
+            alert('Please enter a command');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/send-command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command, target })
+            });
+            
+            const result = await response.json();
+            document.getElementById('output').innerHTML += `<div>${new Date().toLocaleTimeString()}: ${result.message}</div>`;
+        } catch (error) {
+            document.getElementById('output').innerHTML += `<div>Error: ${error.message}</div>`;
+        }
+    }
+
+    async function logout() {
+        await fetch('/logout', { method: 'POST' });
+        window.location.href = '/login';
+    }
+
+    // Load clients on page load and every 3 seconds
+    loadClients();
+    setInterval(loadClients, 3000);
+
+</script>
             padding: 0;
         }
 
