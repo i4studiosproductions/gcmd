@@ -5,123 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RCON Login</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f4f4f4;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
-        
-        .login-container {
-            background: white;
-            padding: 30px;
-            border-radius: 5px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            width: 100%;
-            max-width: 400px;
-        }
-        
-        .login-container h1 {
-            text-align: center;
-            margin-bottom: 20px;
-            color: #35424a;
-        }
-        
-        .form-group {
-            margin-bottom: 15px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 16px;
-        }
-        
-        button {
-            width: 100%;
-            background: #35424a;
-            color: #fff;
-            border: none;
-            padding: 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        
-        button:hover {
-            background: #e8491d;
-        }
-        
-        .message {
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 4px;
-            text-align: center;
-        }
-        
-        .error {
-            background: #ffebee;
-            color: #c62828;
-            border: 1px solid #ef9a9a;
-        }
-        
-        .success {
-            background: #e8f5e9;
-            color: #2e7d32;
-            border: 1px solid #a5d6a7;
-        }
+        body { font-family: Arial, sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; }
+        .login-form { background: #f5f5f5; padding: 20px; border-radius: 5px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input { width: 100%; padding: 8px; border: 1px solid #ddd; }
+        button { background: #007bff; color: white; border: none; padding: 10px; width: 100%; cursor: pointer; }
+        .message { margin-top: 15px; padding: 10px; border-radius: 3px; }
+        .error { background: #ffebee; color: #c62828; }
     </style>
 </head>
 <body>
-    <div class="login-container">
-        <h1>RCON Control Panel</h1>
+    <div class="login-form">
+        <h2>RCON Login</h2>
         <form id="loginForm">
             <div class="form-group">
-                <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required>
+                <label>Username:</label>
+                <input type="text" id="username" required>
             </div>
             <div class="form-group">
-                <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required>
+                <label>Password:</label>
+                <input type="password" id="password" required>
             </div>
             <button type="submit">Login</button>
         </form>
-        <div id="loginMessage" class="message"></div>
+        <div id="message" class="message"></div>
     </div>
 
     <script>
-        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            const messageDiv = document.getElementById('loginMessage');
             
             try {
                 const response = await fetch('/login', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username, password })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                    credentials: 'include'
                 });
                 
                 const result = await response.json();
@@ -129,17 +51,14 @@
                 if (result.status === 'success') {
                     window.location.href = '/admin';
                 } else {
-                    messageDiv.textContent = result.message;
-                    messageDiv.className = 'message error';
+                    document.getElementById('message').textContent = result.message;
+                    document.getElementById('message').className = 'message error';
                 }
             } catch (error) {
-                messageDiv.textContent = 'Login failed: ' + error.message;
-                messageDiv.className = 'message error';
+                document.getElementById('message').textContent = 'Login failed';
+                document.getElementById('message').className = 'message error';
             }
         });
-        
-        // Auto-focus username field
-        document.getElementById('username').focus();
     </script>
 </body>
 </html>
