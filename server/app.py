@@ -6,7 +6,7 @@ import secrets
 import time
 import signal
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Cookie, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Cookie, Response, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
