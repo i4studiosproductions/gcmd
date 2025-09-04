@@ -6,7 +6,7 @@ import secrets
 import time
 import signal
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Cookie, Response, Query, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -52,7 +52,6 @@ CLIENT_CONNECTION_KEY = os.getenv("CLIENT_CONNECTION_KEY", "default-connection-k
 # Session management
 sessions = {}
 
-# Store connected clients
 # Store connected clients
 class ConnectionManager:
     def __init__(self):
@@ -159,7 +158,6 @@ async def websocket_endpoint(
         manager.disconnect(client_name)
 
 # API endpoints
-# API endpoints
 @app.get("/clients")
 async def get_clients(username: str = Depends(authenticate_ui)):
     # Only return currently connected clients
@@ -228,11 +226,14 @@ async def admin_ui(request: Request, username: str = Depends(authenticate_ui)):
     return templates.TemplateResponse("index.html", {"request": request, "username": username})
 
 # Prevent server from shutting down
-def ignore_shutdown_signals():
-    signal.signal(signal.SIGTERM, lambda signum, frame: logger.info("Ignoring SIGTERM"))
-    signal.signal(signal.SIGINT, lambda signum, frame: logger.info("Ignoring SIGINT"))
+def ignore_signals():
+    def handler(signum, frame):
+        logger.info(f"Ignoring signal {signum}, server continues running")
+    
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
 
 if __name__ == "__main__":
-    ignore_shutdown_signals()
-    logger.info("Starting RCON Server n/m")
+    ignore_signals()
+    logger.info("Starting RCON Server gb")
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
