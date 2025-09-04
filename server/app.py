@@ -5,8 +5,8 @@ import asyncio
 import secrets
 import time
 import signal
-from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Cookie, Response
+from typing import Dict
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request, Cookie, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,7 +14,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 import uvicorn
 import uuid
-import threading
 
 # Set up logging
 logging.basicConfig(
@@ -63,7 +62,6 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         self.client_info: Dict[str, dict] = {}
         self.connection_lock = asyncio.Lock()
-        self.heartbeat_task = None
 
     async def connect(self, websocket: WebSocket, client_name: str):
         async with self.connection_lock:
@@ -78,7 +76,7 @@ class ConnectionManager:
             }
             logger.info(f"Client connected: {client_name} (Total connections: {len(self.active_connections)})")
 
-    def disconnect(self, client_name: str):
+    async def disconnect(self, client_name: str):
         async with self.connection_lock:
             if client_name in self.active_connections:
                 del self.active_connections[client_name]
@@ -91,7 +89,7 @@ class ConnectionManager:
                 return True
             except Exception as e:
                 logger.error(f"Error sending message to {client_name}: {e}")
-                self.disconnect(client_name)
+                await self.disconnect(client_name)
                 return False
         return False
 
@@ -105,7 +103,7 @@ class ConnectionManager:
                 disconnected.append(client_name)
         
         for client_name in disconnected:
-            self.disconnect(client_name)
+            await self.disconnect(client_name)
 
     def update_activity(self, client_name: str):
         if client_name in self.client_info:
@@ -134,7 +132,7 @@ class ConnectionManager:
                 
                 # Remove disconnected clients
                 for client_name in disconnected_clients:
-                    self.disconnect(client_name)
+                    await self.disconnect(client_name)
                 
                 await asyncio.sleep(15)  # Send heartbeat every 15 seconds
                 
@@ -192,29 +190,25 @@ async def websocket_endpoint(
                     manager.update_activity(client_name)
                     
             except asyncio.TimeoutError:
-                # Just continue, heartbeat will keep connection alive
                 continue
             except WebSocketDisconnect:
                 break
             except Exception as e:
                 logger.error(f"WebSocket error for {client_name}: {e}")
-                # Don't break on error, try to continue
                 await asyncio.sleep(1)
                 
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
     finally:
-        manager.disconnect(client_name)
+        await manager.disconnect(client_name)
 
 # API endpoints
 @app.get("/clients")
 async def get_clients(username: str = Depends(authenticate_ui)):
-    # Filter out clients that haven't been active recently
     current_time = time.time()
     active_clients = {}
     
     for client_name, info in manager.client_info.items():
-        # Show client if active within last 5 minutes or currently connected
         if (current_time - info.get("last_activity", 0) < 300 or 
             client_name in manager.active_connections):
             active_clients[client_name] = info
@@ -227,7 +221,6 @@ async def send_command(request: CommandRequest, username: str = Depends(authenti
     target = request.target
     
     if target == "all":
-        # Send to all clients
         await manager.broadcast({
             "type": "command",
             "command": command,
@@ -236,7 +229,6 @@ async def send_command(request: CommandRequest, username: str = Depends(authenti
         })
         return {"status": "success", "message": f"Command sent to all clients: {command}"}
     else:
-        # Send to specific client
         success = await manager.send_personal_message({
             "type": "command",
             "command": command,
@@ -258,7 +250,6 @@ async def server_status():
         "total_clients": len(manager.client_info)
     }
 
-# Login endpoint
 @app.post("/login")
 async def login(response: Response, request: LoginRequest):
     correct_username = secrets.compare_digest(request.username, ADMIN_USERNAME)
@@ -267,12 +258,10 @@ async def login(response: Response, request: LoginRequest):
     if not (correct_username and correct_password):
         return {"status": "error", "message": "Invalid credentials"}
     
-    # Create session
     session_id = str(uuid.uuid4())
     sessions[session_id] = request.username
     
-    # Set session cookie
-    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600*24*30)  # 30 days
+    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600*24*30)
     return {"status": "success", "message": "Login successful"}
 
 @app.post("/logout")
@@ -282,7 +271,6 @@ async def logout(response: Response, session_id: str = Cookie(None)):
     response.delete_cookie(key="session_id")
     return {"status": "success", "message": "Logout successful"}
 
-# UI endpoints
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return RedirectResponse(url="/login")
@@ -300,20 +288,16 @@ start_time = time.time()
 
 @app.on_event("startup")
 async def startup_event():
-    # Start heartbeat task
     asyncio.create_task(manager.start_heartbeat())
     logger.info("RCON Server started with heartbeat system")
 
-# Signal handling for graceful shutdown
 def handle_exit(signum, frame):
     logger.info("Received shutdown signal, but ignoring to keep server running")
 
-# Ignore termination signals
 signal.signal(signal.SIGTERM, handle_exit)
 signal.signal(signal.SIGINT, handle_exit)
 
 if __name__ == "__main__":
-    # Run with increased timeout and keep-alive settings
     uvicorn.run(
         app, 
         host=SERVER_HOST, 
