@@ -53,6 +53,7 @@ CLIENT_CONNECTION_KEY = os.getenv("CLIENT_CONNECTION_KEY", "default-connection-k
 sessions = {}
 
 # Store connected clients
+# Store connected clients
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -65,18 +66,16 @@ class ConnectionManager:
             "name": client_name,
             "connected_at": time.time(),
             "last_activity": time.time(),
-            "last_command_result": None,
-            "status": "online"
+            "last_command_result": None
         }
         logger.info(f"Client connected: {client_name}")
 
     def disconnect(self, client_name: str):
         if client_name in self.active_connections:
             del self.active_connections[client_name]
-            if client_name in self.client_info:
-                self.client_info[client_name]["status"] = "offline"
-                self.client_info[client_name]["disconnected_at"] = time.time()
-            logger.info(f"Client disconnected: {client_name}")
+        if client_name in self.client_info:
+            del self.client_info[client_name]
+        logger.info(f"Client disconnected: {client_name}")
 
     async def send_personal_message(self, message: dict, client_name: str):
         if client_name in self.active_connections:
@@ -160,9 +159,12 @@ async def websocket_endpoint(
         manager.disconnect(client_name)
 
 # API endpoints
+# API endpoints
 @app.get("/clients")
 async def get_clients(username: str = Depends(authenticate_ui)):
-    return manager.client_info
+    # Only return currently connected clients
+    return {name: info for name, info in manager.client_info.items() 
+            if name in manager.active_connections}
 
 @app.post("/send-command")
 async def send_command(request: CommandRequest, username: str = Depends(authenticate_ui)):
