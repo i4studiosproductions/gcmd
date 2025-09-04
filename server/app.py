@@ -4,12 +4,12 @@ import logging
 import asyncio
 import secrets
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from starlette.requests import Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -28,6 +28,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
 # Security
 security = HTTPBasic()
@@ -49,14 +53,16 @@ class ConnectionManager:
         self.active_connections[client_name] = websocket
         self.client_info[client_name] = {
             "name": client_name,
-            "connected_at": asyncio.get_event_loop().time()
+            "connected_at": asyncio.get_event_loop().time(),
+            "last_command_result": None
         }
         logger.info(f"Client connected: {client_name}")
 
     def disconnect(self, client_name: str):
         if client_name in self.active_connections:
             del self.active_connections[client_name]
-            del self.client_info[client_name]
+            if client_name in self.client_info:
+                del self.client_info[client_name]
             logger.info(f"Client disconnected: {client_name}")
 
     async def send_personal_message(self, message: dict, client_name: str):
@@ -110,6 +116,7 @@ async def websocket_endpoint(websocket: WebSocket, client_name: str):
                 # Store command result in client info
                 if client_name in manager.client_info:
                     manager.client_info[client_name]["last_command_result"] = message["result"]
+                    logger.info(f"Command result from {client_name}: {message['result']}")
     except WebSocketDisconnect:
         manager.disconnect(client_name)
 
@@ -143,9 +150,20 @@ async def send_command(request: CommandRequest, username: str = Depends(authenti
         else:
             return {"status": "error", "message": f"Client {target} not found"}
 
-@app.get("/")
+@app.get("/command-history/{client_name}")
+async def get_command_history(client_name: str, username: str = Depends(authenticate)):
+    if client_name in manager.client_info:
+        return {"history": manager.client_info[client_name].get("last_command_result")}
+    return {"history": None}
+
+# UI endpoints
+@app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request, username: str = Depends(authenticate)):
-    return {"message": "Welcome to RCON Server", "clients": manager.client_info}
+    return templates.TemplateResponse("index.html", {"request": request, "username": username})
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_ui(request: Request, username: str = Depends(authenticate)):
+    return templates.TemplateResponse("index.html", {"request": request, "username": username})
 
 if __name__ == "__main__":
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
